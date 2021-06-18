@@ -246,12 +246,13 @@ const createProductRecord = async (product: Stripe.Product): Promise<void> => {
     role: firebaseRole ?? null,
     images: product.images,
     metadata: product.metadata,
+    livemode: product.livemode,
     ...prefixMetadata(rawMetadata),
   };
   await admin
     .firestore()
     .collection(config.productsCollectionPath)
-    .doc(product.id)
+    .doc(`${product.livemode ? "live" : "test"}-${product.id}`)
     .set(productData, { merge: true });
   logs.firestoreDocCreated(config.productsCollectionPath, product.id);
 };
@@ -279,12 +280,13 @@ const insertPriceRecord = async (price: Stripe.Price): Promise<void> => {
     trial_period_days: price.recurring?.trial_period_days ?? null,
     transform_quantity: price.transform_quantity,
     metadata: price.metadata,
+    livemode: price.livemode,
     ...prefixMetadata(price.metadata),
   };
   const dbRef = admin
     .firestore()
     .collection(config.productsCollectionPath)
-    .doc(price.product as string)
+    .doc(`${price.livemode ? "live" : "test"}-${price.product as string}`)
     .collection('prices');
   await dbRef.doc(price.id).set(priceData, { merge: true });
   logs.firestoreDocCreated('prices', price.id);
@@ -304,7 +306,7 @@ const insertTaxRateRecord = async (taxRate: Stripe.TaxRate): Promise<void> => {
     .collection(config.productsCollectionPath)
     .doc('tax_rates')
     .collection('tax_rates')
-    .doc(taxRate.id)
+    .doc(`${taxRate.livemode ? "live" : "test"}-${taxRate.id}`)
     .set(taxRateData);
   logs.firestoreDocCreated('tax_rates', taxRate.id);
 };
@@ -317,7 +319,7 @@ const copyBillingDetailsToCustomer = async (
 ): Promise<void> => {
   const customer = payment_method.customer as string;
   const { name, phone, address } = payment_method.billing_details;
-  await stripe.customers.update(customer, { name, phone, address });
+  await stripe.customers.update(customer, { [`${payment_method.livemode ? "live" : "test"}-billing`]: { name, phone, address } });
 };
 
 /**
@@ -328,20 +330,20 @@ const manageSubscriptionStatusChange = async (
   customerId: string,
   createAction: boolean
 ): Promise<void> => {
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+    expand: ['default_payment_method', 'items.data.price.product'],
+  });
   // Get customer's UID from Firestore
   const customersSnap = await admin
     .firestore()
     .collection(config.customersCollectionPath)
-    .where('stripeId', '==', customerId)
+    .where(subscription.livemode ? 'stripeId' : 'stripeTestId', '==', customerId)
     .get();
   if (customersSnap.size !== 1) {
     throw new Error('User not found!');
   }
   const uid = customersSnap.docs[0].id;
   // Retrieve latest subscription status and write it to the Firestore
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-    expand: ['default_payment_method', 'items.data.price.product'],
-  });
   const price: Stripe.Price = subscription.items.data[0].price;
   const prices = [];
   for (const item of subscription.items.data) {
@@ -349,7 +351,7 @@ const manageSubscriptionStatusChange = async (
       admin
         .firestore()
         .collection(config.productsCollectionPath)
-        .doc((item.price.product as Stripe.Product).id)
+        .doc(`${subscription.livemode ? "live" : "test"}-${(item.price.product as Stripe.Product).id}`)
         .collection('prices')
         .doc(item.price.id)
     );
@@ -371,13 +373,13 @@ const manageSubscriptionStatusChange = async (
     product: admin
       .firestore()
       .collection(config.productsCollectionPath)
-      .doc(product.id),
+      .doc(`${subscription.livemode ? "live" : "test"}-${product.id}`),
     price: admin
       .firestore()
       .collection(config.productsCollectionPath)
-      .doc(product.id)
+      .doc(`${subscription.livemode ? "live" : "test"}-${product.id}`)
       .collection('prices')
-      .doc(price.id),
+      .doc(`${subscription.livemode ? "live" : "test"}-${price.id}`),
     prices,
     quantity: subscription.items.data[0].quantity ?? null,
     items: subscription.items.data,
@@ -414,6 +416,7 @@ const manageSubscriptionStatusChange = async (
       // Get existing claims for the user
       const { customClaims } = await admin.auth().getUser(uid);
       // Set new role in custom claims as long as the subs status allows
+      // NOTE: This will have problems with canceled but not expired subs.
       if (['trialing', 'active'].includes(subscription.status)) {
         logs.userCustomClaimSet(uid, 'stripeRole', role);
         await admin
@@ -537,6 +540,7 @@ export const handleWebhookEvents = functions.handler.https.onRequest(
       'payment_intent.payment_failed',
     ]);
     let event: Stripe.Event;
+    let livemode: boolean = true;
 
     // Instead of getting the `Stripe.Event`
     // object directly from `req.body`,
@@ -549,10 +553,19 @@ export const handleWebhookEvents = functions.handler.https.onRequest(
         config.stripeWebhookSecret
       );
     } catch (error) {
-      logs.badWebhookSecret(error);
+      try {
+      event = stripe.webhooks.constructEvent(
+        req.rawBody,
+        req.headers['stripe-signature'],
+        config.stripeWebhookTestSecret
+      );
+      livemode = false;
+    } catch (error2) {
+      logs.badWebhookSecret(error2);
       resp.status(401).send('Webhook Error: Invalid Secret');
       return;
     }
+  }
 
     if (relevantEvents.has(event.type)) {
       logs.startWebhookEventProcessing(event.id, event.type);

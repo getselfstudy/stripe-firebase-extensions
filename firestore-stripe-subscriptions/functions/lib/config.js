@@ -18,6 +18,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
     stripeSecretKey: process.env.STRIPE_API_KEY,
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    stripeWebhookTestSecret: process.env.STRIPE_WEBHOOK_TEST_SECRET,
     productsCollectionPath: process.env.PRODUCTS_COLLECTION,
     customersCollectionPath: process.env.CUSTOMERS_COLLECTION,
     syncUsersOnCreate: process.env.SYNC_USERS_ON_CREATE === 'Sync',

@@ -85,6 +85,15 @@ resources:
       runtime: nodejs10
       httpsTrigger: {}
 
+  - name: handleTestWebhookEvents
+    type: firebaseextensions.v1beta.function
+    description: >-
+      Handles Stripe webhook events to keep subscription statuses in sync and update custom claims.
+    properties:
+      location: ${LOCATION}
+      runtime: nodejs10
+      httpsTrigger: {}
+
   - name: onUserDeleted
     type: firebaseextensions.v1beta.function
     description: >-
@@ -230,3 +239,14 @@ params:
     example: whsec_1234567890
     default: FILL_IN_FROM_POSTINSTALL
     required: true
+
+  - param: STRIPE_WEBHOOK_TEST_SECRET
+    label: Stripe webhook test secret
+    description: >-
+      This is your signing secret for a Stripe-registered webhook. 
+      This webhook can only be registered after installation and optionally for test.
+      Leave this value untouched during installation, then follow the 
+      postinstall instructions for registering your webhook
+      and configuring this value.
+    example: whsec_1234567890
+    default: FILL_IN_FROM_POSTINSTALL
