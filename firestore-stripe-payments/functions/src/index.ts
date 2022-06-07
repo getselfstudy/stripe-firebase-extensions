@@ -91,9 +91,8 @@ const createCustomerRecord = async ({
   }
 };
 
-exports.createCustomer = functions.auth
-  .user()
-  .onCreate(async (user): Promise<void> => {
+exports.createCustomer = functions.auth.user().onCreate(
+  async (user): Promise<void> => {
     if (!config.syncUsersOnCreate) return;
     const { email, uid, phoneNumber } = user;
     await createCustomerRecord({
@@ -101,7 +100,8 @@ exports.createCustomer = functions.auth
       uid,
       phone: phoneNumber,
     });
-  });
+  }
+);
 
 /**
  * Create a CheckoutSession or PaymentIntent based on which client is being used.
@@ -145,31 +145,32 @@ exports.createCheckoutSession = functions.firestore
       // Get stripe customer id
       let customerRecord = (await snap.ref.parent.parent.get()).data();
       if (!customerRecord?.stripeId) {
+        const customerEmail = customerRecord?.email;
         const { email, phoneNumber } = await admin
           .auth()
-          .getUser(context.params.uid);
+          .getUser(context.params.uid)
+          .catch((err) => null);
         customerRecord = await createCustomerRecord({
           uid: context.params.uid,
-          email,
+          email: customerEmail ?? email,
           phone: phoneNumber,
         });
       }
       const customer = customerRecord.stripeId;
       if (client === 'web') {
         // Get shipping countries
-        const shippingCountries: Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[] =
-          collect_shipping_address
-            ? (
-                await admin
-                  .firestore()
-                  .collection(
-                    config.stripeConfigCollectionPath ||
-                      config.productsCollectionPath
-                  )
-                  .doc('shipping_countries')
-                  .get()
-              ).data()?.['allowed_countries'] ?? []
-            : [];
+        const shippingCountries: Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[] = collect_shipping_address
+          ? (
+              await admin
+                .firestore()
+                .collection(
+                  config.stripeConfigCollectionPath ||
+                    config.productsCollectionPath
+                )
+                .doc('shipping_countries')
+                .get()
+            ).data()?.['allowed_countries'] ?? []
+          : [];
         const sessionCreateParams: Stripe.Checkout.SessionCreateParams = {
           billing_address_collection,
           shipping_address_collection: { allowed_countries: shippingCountries },
@@ -264,11 +265,9 @@ exports.createCheckoutSession = functions.firestore
             ...(setup_future_usage && { setup_future_usage }),
           };
           if (payment_method_types) {
-            paymentIntentCreateParams.payment_method_types =
-              payment_method_types;
+            paymentIntentCreateParams.payment_method_types = payment_method_types;
           } else {
-            paymentIntentCreateParams.automatic_payment_methods =
-              automatic_payment_methods;
+            paymentIntentCreateParams.automatic_payment_methods = automatic_payment_methods;
           }
           const paymentIntent = await stripe.paymentIntents.create(
             paymentIntentCreateParams
